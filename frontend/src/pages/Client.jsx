@@ -14,95 +14,115 @@ export default function Client() {
   }, []);
 
   const startStreaming = async () => {
-    // Webcam
-    const webcamStream = await navigator.mediaDevices.getUserMedia({
-      video: true,
-      audio: true,
-    });
+    try {
+      // Webcam
+      const webcamStream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: true,
+      });
 
-    // Screen
-    const screenStream = await navigator.mediaDevices.getDisplayMedia({
-      video: true,
-      audio: true,
-    });
+      // Screen
+      const screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: true,
+      });
 
-    // Add timestamp overlay
-    const webcamProcessed = await addTimestamp(webcamStream);
-    const screenProcessed = await addTimestamp(screenStream);
+      // Add timestamp overlay
+      const webcamProcessed = await addTimestamp(webcamStream);
+      const screenProcessed = await addTimestamp(screenStream);
 
-    webcamRef.current.srcObject = webcamProcessed;
-    screenRef.current.srcObject = screenProcessed;
+      webcamRef.current.srcObject = webcamProcessed;
+      screenRef.current.srcObject = screenProcessed;
 
-    createPeerConnection(webcamProcessed, screenProcessed);
+      createPeerConnection(webcamProcessed, screenProcessed);
+    } catch (err) {
+      console.error("Error accessing media devices:", err);
+    }
   };
 
   const addTimestamp = async (stream) => {
-    const video = document.createElement("video");
-    video.srcObject = stream;
+    return new Promise((resolve) => {
+      const video = document.createElement("video");
+      video.srcObject = stream;
+      video.muted = true;
+      video.playsInline = true;
 
-    await video.play();
+      const canvas = document.createElement("canvas");
+      canvas.width = 1280;
+      canvas.height = 720;
 
-    const canvas = document.createElement("canvas");
-    canvas.width = 1280;
-    canvas.height = 720;
+      const ctx = canvas.getContext("2d");
 
-    const ctx = canvas.getContext("2d");
+      // Wait for video to have metadata (dimensions) before starting to draw
+      video.onloadedmetadata = () => {
+        video.play();
 
-    setInterval(() => {
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        // Now start the drawing loop
+        const intervalId = setInterval(() => {
+          try {
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      const now = new Date();
+            const now = new Date();
+            const time = now.toLocaleTimeString();
 
-      const time = now.toLocaleTimeString();
+            ctx.font = "40px Arial";
+            ctx.fillStyle = "red";
+            ctx.fillText(time, 50, 60);
+          } catch (err) {
+            console.error("Error drawing to canvas:", err);
+          }
+        }, 1000 / 30);
 
-      ctx.font = "40px Arial";
-      ctx.fillStyle = "red";
-      ctx.fillText(time, 50, 60);
-    }, 1000 / 30);
-
-    return canvas.captureStream(30);
+        // Return the canvas stream after it's ready
+        resolve(canvas.captureStream(30));
+      };
+    });
   };
 
   const createPeerConnection = async (webcamStream, screenStream) => {
-    peerConnection.current = new RTCPeerConnection({
-      iceServers: [
-        {
-          urls: "stun:stun.l.google.com:19302",
-        },
-      ],
-    });
+    try {
+      peerConnection.current = new RTCPeerConnection({
+        iceServers: [
+          {
+            urls: "stun:stun.l.google.com:19302",
+          },
+        ],
+      });
 
-    webcamStream.getTracks().forEach((track) => {
-      peerConnection.current.addTrack(track, webcamStream);
-    });
+      webcamStream.getTracks().forEach((track) => {
+        peerConnection.current.addTrack(track, webcamStream);
+      });
 
-    screenStream.getTracks().forEach((track) => {
-      peerConnection.current.addTrack(track, screenStream);
-    });
+      screenStream.getTracks().forEach((track) => {
+        peerConnection.current.addTrack(track, screenStream);
+      });
 
-    peerConnection.current.onicecandidate = (event) => {
-      if (event.candidate) {
-        socket.emit("ice-candidate", event.candidate);
-      }
-    };
+      peerConnection.current.onicecandidate = (event) => {
+        if (event.candidate) {
+          socket.emit("ice-candidate", event.candidate);
+        }
+      };
 
-    const offer = await peerConnection.current.createOffer();
+      const offer = await peerConnection.current.createOffer();
 
-    await peerConnection.current.setLocalDescription(offer);
+      await peerConnection.current.setLocalDescription(offer);
 
-    socket.emit("offer", offer);
+      socket.emit("offer", offer);
 
-    socket.on("answer", async (answer) => {
-      await peerConnection.current.setRemoteDescription(answer);
-    });
+      socket.on("answer", async (answer) => {
+        await peerConnection.current.setRemoteDescription(answer);
+      });
 
-    socket.on("ice-candidate", async (candidate) => {
-      try {
-        await peerConnection.current.addIceCandidate(candidate);
-      } catch (err) {
-        console.log(err);
-      }
-    });
+      socket.on("ice-candidate", async (candidate) => {
+        try {
+          await peerConnection.current.addIceCandidate(candidate);
+        } catch (err) {
+          console.log(err);
+        }
+      });
+    } catch (err) {
+      console.error("Error creating peer connection:", err);
+    }
   };
 
   return (
